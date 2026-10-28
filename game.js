@@ -6,7 +6,13 @@
    ========================================================================== */
 
 const TILE_SIZE = 52; // 타일 크기 (픽셀)
-const INIT_TIME = 60; // 초기 제한 시간 (초)
+const INIT_TIME = 60;     // 시작 시간 (초)
+const MAX_TIME = 90;      // 시간 상한 (초)
+const BONUS_TIME = 3;     // 단어 연결 성공 시 추가 시간 (초)
+const HINT_COST = 10;     // 힌트 사용 시 차감 시간 (초)
+const MAX_EXPANSIONS = 1; // 막혔을 때 보드를 확장해 주는 횟수 (이후 막히면 종료)
+const MIN_ZOOM = 0.4;
+const MAX_ZOOM = 2;
 
 // 오디오 시스템
 class SoundSystem {
@@ -108,14 +114,16 @@ class CanvasManager {
 
   // 사도 이미지를 비동기로 로드하고 날아오르는 효과 등록
   spawnFlyingApostle(imageSrc, apostleName) {
+    imageSrc = imageSrc || 'images/default.png';
     let img = this.imageCache.get(imageSrc);
     if (!img) {
       img = new Image();
-      img.src = imageSrc;
       img.onerror = () => {
-        // 이미지가 없으면 기본 대체 이미지 로드 시도
+        // 이미지가 없으면 기본 대체 이미지를 한 번만 시도 (default.png도 없으면 볼따구 폴백 사용)
+        img.onerror = null;
         img.src = 'images/default.png';
       };
+      img.src = imageSrc;
       this.imageCache.set(imageSrc, img);
     }
 
@@ -217,6 +225,15 @@ class CrosswordGame {
     this.score = 0;
     this.timeLeft = INIT_TIME;
     this.timerInterval = null;
+    this.state = 'ready'; // ready(시작 전) | playing | over
+    this.expandCount = 0;  // 보드 확장 사용 횟수
+    this.connectedCount = 0; // 직접 입력해 연결한 단어 수
+    this.pointers = new Map(); // 터치/마우스 포인터 (이동·핀치 줌)
+    this.pinch = null;
+    this.lastFocus = { x: 0, y: 0 }; // 가장 최근에 연결한 단어의 중심 좌표
+
+    this.dictMap = new Map(TRICKCAL_DICTIONARY.map(item => [item.word, item]));
+    this.bestScore = this.loadBest();
 
     // 카메라 뷰포트 상태
     this.camera = { x: 0, y: 0, zoom: 1 };
@@ -225,7 +242,17 @@ class CrosswordGame {
 
     this.initDOM();
     this.initEvents();
-    this.startNewGame();
+    this.showStartScreen();
+  }
+
+  // 최고 점수 저장/불러오기 (저장소 사용 불가 환경 대비)
+  loadBest() {
+    try { return parseInt(localStorage.getItem('cwrush_best') || '0', 10) || 0; }
+    catch (e) { return 0; }
+  }
+
+  saveBest(v) {
+    try { localStorage.setItem('cwrush_best', String(v)); } catch (e) { /* 무시 */ }
   }
 
   initDOM() {
@@ -238,6 +265,13 @@ class CrosswordGame {
     this.timerBarEl = document.getElementById('timerBar');
     this.historyListEl = document.getElementById('historyList');
     this.bubbleEl = document.getElementById('bubbleNotice');
+    this.startScreenEl = document.getElementById('startScreen');
+    this.endScreenEl = document.getElementById('endScreen');
+    this.btnResultEl = document.getElementById('btnResult');
+    this.endTitleEl = document.getElementById('endTitle');
+    this.endReasonEl = document.getElementById('endReason');
+    this.timerPillEl = document.querySelector('.stat-pill.timer');
+    this.scorePillEl = this.scoreEl.closest('.stat-pill');
   }
 
   initEvents() {
@@ -245,6 +279,22 @@ class CrosswordGame {
     document.getElementById('wordForm').addEventListener('submit', (e) => {
       e.preventDefault();
       this.submitWord(this.inputEl.value.trim());
+    });
+
+    // 시작 / 재시작 / 결과 보기
+    document.getElementById('btnStart').addEventListener('click', () => this.startNewGame());
+    document.getElementById('btnRestart').addEventListener('click', () => this.startNewGame());
+    document.getElementById('btnViewBoard').addEventListener('click', () => {
+      this.endScreenEl.classList.remove('show');
+      this.btnResultEl.hidden = false;
+    });
+    this.btnResultEl.addEventListener('click', () => {
+      this.endScreenEl.classList.add('show');
+      this.btnResultEl.hidden = true;
+    });
+    // 시작 화면에서만 Enter로 시작 (종료 직후 실수로 재시작되지 않도록 종료 화면은 제외)
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && this.state === 'ready') this.startNewGame();
     });
 
     // 힌트 버튼
@@ -257,32 +307,97 @@ class CrosswordGame {
       btnSound.textContent = this.sound.muted ? '🔇' : '🔊';
     });
 
-    // 보드 드래그 패닝
-    this.viewportEl.addEventListener('mousedown', (e) => {
-      if (e.target.closest('#bubbleNotice')) return;
-      this.isDragging = true;
-      this.dragStart = { x: e.clientX - this.camera.x, y: e.clientY - this.camera.y };
+    // 보드 이동: 마우스 드래그 + 터치 드래그 + 두 손가락 핀치 줌 (Pointer Events)
+    const vp = this.viewportEl;
+    vp.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('.view-controls') || e.target.closest('#bubbleNotice')) return;
+      try { vp.setPointerCapture(e.pointerId); } catch (err) { /* 무시 */ }
+      this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      this.setBoardDragging(true);
+      if (this.pointers.size === 1) {
+        this.dragStart = { x: e.clientX - this.camera.x, y: e.clientY - this.camera.y };
+      } else if (this.pointers.size === 2) {
+        this.pinch = { dist: this.pointerDistance(), zoom: this.camera.zoom };
+      }
     });
 
-    window.addEventListener('mousemove', (e) => {
-      if (!this.isDragging) return;
-      this.camera.x = e.clientX - this.dragStart.x;
-      this.camera.y = e.clientY - this.dragStart.y;
-      this.updateBoardTransform();
+    vp.addEventListener('pointermove', (e) => {
+      if (!this.pointers.has(e.pointerId)) return;
+      this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.pointers.size === 1) {
+        this.camera.x = e.clientX - this.dragStart.x;
+        this.camera.y = e.clientY - this.dragStart.y;
+        this.updateBoardTransform();
+      } else if (this.pointers.size >= 2 && this.pinch && this.pinch.dist > 0) {
+        const [p1, p2] = [...this.pointers.values()];
+        const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, this.pinch.zoom * this.pointerDistance() / this.pinch.dist));
+        this.zoomAt((p1.x + p2.x) / 2, (p1.y + p2.y) / 2, zoom);
+      }
     });
 
-    window.addEventListener('mouseup', () => { this.isDragging = false; });
+    const endPointer = (e) => {
+      if (!this.pointers.has(e.pointerId)) return;
+      this.pointers.delete(e.pointerId);
+      this.pinch = null;
+      if (this.pointers.size === 0) {
+        this.setBoardDragging(false);
+      } else if (this.pointers.size === 1) {
+        // 핀치 후 남은 손가락으로 이어서 드래그
+        const p = [...this.pointers.values()][0];
+        this.dragStart = { x: p.x - this.camera.x, y: p.y - this.camera.y };
+      }
+    };
+    vp.addEventListener('pointerup', endPointer);
+    vp.addEventListener('pointercancel', endPointer);
 
-    // 휠 줌
-    this.viewportEl.addEventListener('wheel', (e) => {
+    // 휠 줌 (커서 위치 기준)
+    vp.addEventListener('wheel', (e) => {
       e.preventDefault();
-      const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
-      this.camera.zoom = Math.min(Math.max(0.5, this.camera.zoom * zoomFactor), 1.8);
-      this.updateBoardTransform();
+      const factor = e.deltaY < 0 ? 1.1 : 0.9;
+      const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, this.camera.zoom * factor));
+      this.setBoardDragging(true);
+      this.zoomAt(e.clientX, e.clientY, zoom);
+      clearTimeout(this.wheelTimer);
+      this.wheelTimer = setTimeout(() => this.setBoardDragging(false), 150);
     }, { passive: false });
+
+    // 보기 컨트롤: 확대 / 축소 / 전체 보기 / 최근 단어로 이동
+    const center = () => {
+      const r = vp.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    };
+    const zoomBy = (f) => {
+      const c = center();
+      this.zoomAt(c.x, c.y, Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, this.camera.zoom * f)));
+    };
+    document.getElementById('btnZoomIn').addEventListener('click', () => zoomBy(1.25));
+    document.getElementById('btnZoomOut').addEventListener('click', () => zoomBy(0.8));
+    document.getElementById('btnFit').addEventListener('click', () => this.fitAll());
+    document.getElementById('btnLast').addEventListener('click', () => {
+      this.centerCameraOn(this.lastFocus.x, this.lastFocus.y);
+    });
+  }
+
+  showStartScreen() {
+    this.state = 'ready';
+    document.getElementById('bestScoreStart').textContent = this.bestScore;
+    document.getElementById('initTimeText').textContent = INIT_TIME;
+    document.getElementById('maxTimeText').textContent = MAX_TIME;
+    document.getElementById('bonusText').textContent = BONUS_TIME;
+    document.getElementById('hintCostText').textContent = HINT_COST;
+    this.inputEl.disabled = true;
+    this.startScreenEl.classList.add('show');
   }
 
   startNewGame() {
+    this.startScreenEl.classList.remove('show');
+    this.endScreenEl.classList.remove('show');
+    this.btnResultEl.hidden = true;
+    this.inputEl.disabled = false;
+    this.inputEl.value = '';
+    this.inputEl.focus();
+    this.state = 'playing';
+    this.camera.zoom = 1;
     this.grid.clear();
     this.placedWords = [];
     this.usedWords.clear();
@@ -290,6 +405,9 @@ class CrosswordGame {
     this.historyListEl.innerHTML = '';
     this.score = 0;
     this.timeLeft = INIT_TIME;
+    this.expandCount = 0;
+    this.connectedCount = 0;
+    this.updateTimerUI();
     this.updateStats();
 
     // 초기 시드 단어 선택 (예: 모나티엄 또는 사멜리아)
@@ -304,66 +422,212 @@ class CrosswordGame {
     clearInterval(this.timerInterval);
     this.timerInterval = setInterval(() => {
       this.timeLeft--;
-      this.timerTextEl.textContent = this.timeLeft;
-      const pct = (this.timeLeft / INIT_TIME) * 100;
-      this.timerBarEl.style.width = `${Math.max(0, pct)}%`;
-
-      if (this.timeLeft <= 0) {
-        clearInterval(this.timerInterval);
-        this.showToast('시간 종료! 최종 점수: ' + this.score);
-        this.inputEl.disabled = true;
-      }
+      this.updateTimerUI();
+      if (this.timeLeft <= 0) this.endGame('time');
     }, 1000);
   }
 
   // 단어 검증 및 교차 자동 매칭
-  submitWord(input) {
+  submitWord(raw) {
+    if (this.state !== 'playing') return;
+    // 공백·특수문자 제거 (예: "마에스트로 이호" → "마에스트로이호")
+    const input = (raw || '').replace(/[\s!?.,~…·'"“”()\[\]-]/g, '');
     if (!input) return;
     this.inputEl.value = '';
 
-    // 사전 등록 여부 확인
-    const entry = TRICKCAL_DICTIONARY.find(item => item.word === input);
+    // 1) 사전 등록 여부
+    const entry = this.dictMap.get(input);
     if (!entry) {
-      this.showToast(`사전에 없는 단어입니다: "${input}"`);
-      this.sound.playError();
+      const similar = TRICKCAL_DICTIONARY
+        .filter(item => input.length >= 2 && (item.word.includes(input) || input.includes(item.word)))
+        .sort((a, b) => a.word.length - b.word.length) // 짧은(가까운) 단어 우선
+        .slice(0, 3).map(item => item.word);
+      const hint = similar.length ? `\n혹시 ${similar.map(w => `"${w}"`).join(', ')}?` : '';
+      this.showToast(`❌ 사전에 없는 단어예요: "${input}"${hint}`, 'error');
+      this.feedbackError();
       return;
     }
 
-    // 이미 배치된 단어인지 확인
+    // 2) 이미 보드에 있는 단어
     if (this.usedWords.has(input)) {
-      this.showToast(`이미 보드에 연결된 단어입니다: "${input}"`);
-      this.sound.playError();
+      this.showToast(`🔁 이미 보드에 있는 단어예요: "${input}"`, 'warn');
+      this.feedbackError();
       return;
     }
 
-    // 교차 가능한 좌표 탐색
+    // 3) 교차 가능한 좌표 탐색
     const placement = this.findPlacement(input);
     if (!placement) {
-      this.showToast(`보드 위의 글자와 교차하여 놓을 수 있는 빈자리가 없습니다!`);
-      this.sound.playError();
+      const letters = [...new Set(input)];
+      const boardChars = new Set([...this.grid.values()].map(c => c.char));
+      const shared = letters.filter(ch => boardChars.has(ch));
+      if (shared.length === 0) {
+        this.showToast(`🧩 "${input}" — 보드에 겹치는 글자가 없어요\n${letters.join('·')} 중 하나가 보드에 있어야 해요`, 'warn');
+      } else {
+        this.showToast(`🧩 "${input}" — ${shared.join('·')} 글자는 겹치지만 놓을 빈자리가 없어요\n(다른 글자와 붙거나 겹치는 자리예요)`, 'warn');
+      }
+      this.feedbackError();
       return;
     }
 
-    // 단어 배치
+    // 4) 성공: 배치 / 점수 / 시간 보너스
     this.placeWord(input, placement.x, placement.y, placement.dir, false, placement.anchor);
-
-    // 사운드 및 점수 부여
     this.sound.playSuccess();
     this.sound.playPop();
-    this.score += input.length * 100;
-    this.timeLeft = Math.min(INIT_TIME, this.timeLeft + 5); // 성공 시 5초 보너스
+    this.connectedCount++;
+    const gained = input.length * 100;
+    this.score += gained;
+    this.addTime(BONUS_TIME);
     this.updateStats();
+    this.pulse(this.scorePillEl, 'bump');
 
     // 배경에 해당 사도 일러스트 날리기
     this.canvasManager.spawnFlyingApostle(entry.image, entry.word);
 
-    // 사도 명대사가 있다면 토스트로 잠깐 노출
-    if (entry.quote) {
-      this.showToast(`[${entry.word}] "${entry.quote}"`);
-    }
+    let msg = `✅ ${input}  +${gained}점  +${BONUS_TIME}초`;
+    if (entry.quote) msg += `\n"${entry.quote}"`;
+    this.showToast(msg, 'ok', entry.quote ? 3200 : 2000);
 
     // 카메라를 새로 연결된 단어로 부드럽게 이동
     this.centerCameraOn(placement.x + Math.floor(input.length / 2), placement.y);
+
+    // 더 이을 단어가 남았는지 확인 (막힘 처리)
+    this.checkStuck();
+  }
+
+  // 입력 실패 시 입력창 흔들기 + 효과음
+  feedbackError() {
+    this.sound.playError();
+    this.inputEl.classList.remove('shake');
+    void this.inputEl.offsetWidth; // 애니메이션 재시작
+    this.inputEl.classList.add('shake');
+  }
+
+  // 요소에 잠깐 애니메이션 클래스 부여
+  pulse(el, cls) {
+    if (!el) return;
+    el.classList.remove(cls);
+    void el.offsetWidth;
+    el.classList.add(cls);
+    setTimeout(() => el.classList.remove(cls), 600);
+  }
+
+  // 남은 시간 증감 (상한 MAX_TIME)
+  addTime(delta) {
+    this.timeLeft = Math.min(MAX_TIME, this.timeLeft + delta);
+    this.updateTimerUI();
+    this.pulse(this.timerPillEl, delta >= 0 ? 'bump' : 'penalty');
+  }
+
+  updateTimerUI() {
+    this.timerTextEl.textContent = Math.max(0, this.timeLeft);
+    const pct = Math.max(0, Math.min(100, (this.timeLeft / MAX_TIME) * 100));
+    this.timerBarEl.style.width = `${pct}%`;
+  }
+
+  // ---------- 막힘 감지 / 보드 확장 ----------
+
+  // 연결 가능한 단어가 하나도 없으면: 첫 번째는 보드 확장, 이후에는 종료
+  checkStuck() {
+    if (this.state !== 'playing') return;
+    if (this.getAvailableWords().length > 0) return;
+
+    if (this.expandCount < MAX_EXPANSIONS) {
+      const plan = this.findExpansion();
+      if (plan) {
+        this.expandCount++;
+        this.placeWord(plan.word, plan.x, plan.y, 'H', true);
+        this.updateStats();
+        this.centerCameraOn(plan.x + Math.floor(plan.word.length / 2), plan.y);
+        this.showToast(
+          `🧩 더 이을 단어가 없어 보드가 확장됐어요!\n새 단어 "${plan.word}" 추가 — 다음 막힘에는 게임이 종료돼요`,
+          'info', 4200
+        );
+        return;
+      }
+    }
+    this.endGame('stuck');
+  }
+
+  // 보드 아래쪽에 새 시작 단어를 놓을 위치/단어 탐색 (놓은 뒤 이어 붙일 단어가 많은 후보 우선)
+  findExpansion() {
+    const b = this.getBounds();
+    const x = b.minX, y = b.maxY + 3; // 기존 보드와 닿지 않도록 간격을 둠
+    const pool = TRICKCAL_DICTIONARY.filter(
+      d => !this.usedWords.has(d.word) && d.word.length >= 3 && d.word.length <= 6
+    );
+    for (let i = pool.length - 1; i > 0; i--) { // 셔플
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    let best = null;
+    for (const item of pool.slice(0, 40)) {
+      const idx = this.placedWords.length;
+      const keys = [];
+      this.placedWords.push({ word: item.word, dir: 'H', startX: x, startY: y });
+      this.usedWords.add(item.word);
+      for (let i = 0; i < item.word.length; i++) {
+        const key = `${x + i},${y}`;
+        this.grid.set(key, { char: item.word[i], wordIndex: idx });
+        keys.push(key);
+      }
+      const count = this.getAvailableWords().length;
+      keys.forEach(k => this.grid.delete(k)); // 가상 배치 되돌리기
+      this.placedWords.pop();
+      this.usedWords.delete(item.word);
+
+      if (count > 0 && (!best || count > best.count)) best = { word: item.word, x, y, count };
+      if (best && best.count >= 10) break;
+    }
+    return best;
+  }
+
+  // 보드에 놓인 타일 전체의 경계
+  getBounds() {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const key of this.grid.keys()) {
+      const [x, y] = key.split(',').map(Number);
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    }
+    if (minX === Infinity) return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
+    return { minX, maxX, minY, maxY };
+  }
+
+  // ---------- 보드 이동 / 줌 보조 ----------
+
+  pointerDistance() {
+    const [p1, p2] = [...this.pointers.values()];
+    return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+  }
+
+  // 드래그·핀치·휠 중에는 부드러운 이동 애니메이션을 꺼서 손에 붙게 함
+  setBoardDragging(on) {
+    this.boardEl.style.transition = on ? 'none' : '';
+  }
+
+  // 화면 좌표(clientX, clientY)를 고정점으로 삼아 줌
+  zoomAt(clientX, clientY, newZoom) {
+    const r = this.viewportEl.getBoundingClientRect();
+    const cx = clientX - r.left, cy = clientY - r.top;
+    const ratio = newZoom / this.camera.zoom;
+    this.camera.x = cx - (cx - this.camera.x) * ratio;
+    this.camera.y = cy - (cy - this.camera.y) * ratio;
+    this.camera.zoom = newZoom;
+    this.updateBoardTransform();
+  }
+
+  // 보드 전체가 한 화면에 보이도록 맞춤
+  fitAll() {
+    const b = this.getBounds();
+    const w = (b.maxX - b.minX + 1) * TILE_SIZE, h = (b.maxY - b.minY + 1) * TILE_SIZE;
+    const pad = 80;
+    const z = Math.min(
+      (this.viewportEl.clientWidth - pad) / w,
+      (this.viewportEl.clientHeight - pad) / h
+    );
+    this.camera.zoom = Math.min(1.2, Math.max(MIN_ZOOM, z));
+    this.centerCameraOn((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2);
   }
 
   // 십자말풀이 직교 규칙 검사 (H면 V로 교차, V면 H로 교차)
@@ -450,10 +714,12 @@ class CrosswordGame {
       }
     }
 
+    this.lastFocus = { x: startX + (dir === 'H' ? Math.floor(word.length / 2) : 0), y: startY + (dir === 'V' ? Math.floor(word.length / 2) : 0) };
+
     // 히스토리 리스트에 등록
     const li = document.createElement('li');
     li.className = `history-item ${isSeed ? 'seed-item' : ''}`;
-    li.textContent = isSeed ? `[시작] ${word}` : word;
+    li.textContent = isSeed ? `[${this.placedWords.length > 1 ? '확장' : '시작'}] ${word}` : word;
     this.historyListEl.appendChild(li);
   }
 
@@ -470,32 +736,104 @@ class CrosswordGame {
   }
 
   updateStats() {
-    this.wordCountEl.textContent = this.placedWords.length;
+    this.wordCountEl.textContent = this.connectedCount;
     this.scoreEl.textContent = this.score;
   }
 
-  showToast(msg) {
+  // type: error(빨강) | warn(주황) | ok(초록) | info(파랑)
+  showToast(msg, type = 'error', duration = 2600) {
     this.bubbleEl.textContent = msg;
-    this.bubbleEl.classList.add('show');
+    this.bubbleEl.className = `bubble-notice ${type} show`;
     clearTimeout(this.bubbleTimer);
     this.bubbleTimer = setTimeout(() => {
       this.bubbleEl.classList.remove('show');
-    }, 2400);
+    }, duration);
   }
 
   showHint() {
-    // 아직 사용되지 않은 단어 중 현재 보드에 교차 가능한 단어 하나 찾기
-    for (const item of TRICKCAL_DICTIONARY) {
-      if (!this.usedWords.has(item.word)) {
-        const p = this.findPlacement(item.word);
-        if (p) {
-          this.inputEl.value = item.word;
-          this.showToast(`추천 단어: "${item.word}" (엔터를 누르면 연결됩니다)`);
-          return;
-        }
+    if (this.state !== 'playing') return;
+    if (this.timeLeft <= HINT_COST) {
+      this.showToast(`⏱ 남은 시간이 ${HINT_COST}초 이하라 힌트를 쓸 수 없어요`, 'warn');
+      return;
+    }
+    // 현재 보드에 교차 가능한 남은 단어 중 무작위로 하나 추천
+    const list = this.getAvailableWords();
+    if (list.length === 0) {
+      this.showToast("현재 연결할 수 있는 남은 단어가 없습니다!", 'warn');
+      return;
+    }
+    const item = list[Math.floor(Math.random() * list.length)];
+    this.addTime(-HINT_COST);
+    this.inputEl.value = item.word;
+    this.inputEl.focus();
+    this.showToast(`💡 추천 단어: "${item.word}"  (-${HINT_COST}초)\nEnter를 누르면 연결돼요`, 'info', 3000);
+    if (this.timeLeft <= 0) this.endGame('time');
+  }
+
+  // 지금 보드에 연결 가능한(아직 안 쓴) 사전 단어 전체
+  getAvailableWords() {
+    return TRICKCAL_DICTIONARY.filter(
+      item => !this.usedWords.has(item.word) && this.findPlacement(item.word)
+    );
+  }
+
+  // 게임 종료: 결과 화면 + 놓친(연결 가능했던) 단어 표시
+  endGame(reason = 'time') {
+    clearInterval(this.timerInterval);
+    this.state = 'over';
+    this.inputEl.disabled = true;
+    this.inputEl.blur();
+    this.endTitleEl.textContent = reason === 'stuck' ? '막다른 길!' : '시간 종료!';
+    this.endReasonEl.textContent = reason === 'stuck'
+      ? '보드를 확장한 뒤에도 더 이을 수 있는 단어가 없어 게임이 끝났어요.'
+      : '';
+
+    const isRecord = this.score > this.bestScore;
+    if (isRecord) {
+      this.bestScore = this.score;
+      this.saveBest(this.bestScore);
+    }
+
+    document.getElementById('endScore').textContent = this.score;
+    document.getElementById('endWords').textContent = this.connectedCount;
+    document.getElementById('endBest').textContent = this.bestScore;
+    document.getElementById('newRecord').hidden = !isRecord;
+    this.renderMissedWords();
+    this.endScreenEl.classList.add('show');
+  }
+
+  renderMissedWords() {
+    const list = this.getAvailableWords();
+    document.getElementById('missedCount').textContent = list.length;
+    const box = document.getElementById('missedList');
+    box.innerHTML = '';
+
+    if (list.length === 0) {
+      box.textContent = '더 이어 붙일 수 있는 단어가 없었어요. 보드를 끝까지 채웠어요!';
+      return;
+    }
+
+    // 카테고리별로 묶고, 긴 단어부터 표시
+    const groups = new Map();
+    for (const item of list) {
+      if (!groups.has(item.category)) groups.set(item.category, []);
+      groups.get(item.category).push(item);
+    }
+    for (const [cat, items] of groups) {
+      items.sort((a, b) => b.word.length - a.word.length);
+      const head = document.createElement('div');
+      head.className = 'missed-cat';
+      head.textContent = `${cat} (${items.length})`;
+      box.appendChild(head);
+      for (const item of items) {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = item.word;
+        const tip = item.title || (item.owner ? `${item.owner}의 ${cat}` : '');
+        if (tip) chip.title = tip;
+        box.appendChild(chip);
       }
     }
-    this.showToast("현재 연결할 수 있는 남은 단어가 없습니다!");
   }
 }
 

@@ -27,7 +27,8 @@
         <div class="stat-pill timer"><span class="label">남은 시간</span> <strong id="timerText">60</strong>s</div>
       </div>
       <div class="header-actions">
-        <button id="btnHint" class="action-btn" title="힌트 보기">💡 힌트</button>
+        <button id="btnResult" class="action-btn" title="결과 다시 보기" hidden>📋 결과</button>
+        <button id="btnHint" class="action-btn" title="추천 단어 보기 (시간 10초 감소)">💡 힌트 <small>-10초</small></button>
         <button id="btnSound" class="action-btn" title="소리 켜기/끄기">🔊</button>
       </div>
     </header>
@@ -43,6 +44,14 @@
       
       <!-- 보드 위 힌트 및 말풍선 알림 레이어 -->
       <div id="bubbleNotice" class="bubble-notice"></div>
+
+      <!-- 보기 컨트롤 (확대/축소/전체 보기/최근 단어) -->
+      <div class="view-controls">
+        <button id="btnZoomIn" title="확대">＋</button>
+        <button id="btnZoomOut" title="축소">－</button>
+        <button id="btnFit" title="보드 전체 보기">⛶</button>
+        <button id="btnLast" title="최근 단어로 이동">🎯</button>
+      </div>
     </main>
 
     <!-- 우측 하단: 단어 히스토리 로그 -->
@@ -64,6 +73,44 @@
         <button type="submit" id="btnSubmit">입력</button>
       </form>
     </footer>
+
+    <!-- 시작 화면 -->
+    <div id="startScreen" class="overlay show">
+      <div class="overlay-card">
+        <span class="badge">TRICKCAL</span>
+        <h1 class="overlay-title">낱말 러시</h1>
+        <p class="overlay-desc">보드 위 글자와 겹치는 트릭컬 단어를 입력해 십자말풀이를 이어 가세요.</p>
+        <ul class="rule-list">
+          <li>보드에 있는 글자를 공유하는 단어를 입력하면 가로·세로로 연결돼요</li>
+          <li>연결할 때마다 <strong>글자 수 × 100점</strong>, 시간 <strong>+<span id="bonusText">3</span>초</strong> (최대 <span id="maxTimeText">90</span>초)</li>
+          <li>시작 시간은 <strong id="initTimeText">60</strong>초이고, 힌트를 보면 <strong>-<span id="hintCostText">10</span>초</strong></li>
+          <li>더 이을 단어가 없으면 보드가 <strong>한 번</strong> 확장되고, 또 막히면 게임이 끝나요</li>
+        </ul>
+        <div class="best-line">최고 점수 <strong id="bestScoreStart">0</strong></div>
+        <button id="btnStart" class="primary-btn">시작하기</button>
+        <div class="overlay-sub">Enter 키로도 시작할 수 있어요</div>
+      </div>
+    </div>
+
+    <!-- 종료 화면 -->
+    <div id="endScreen" class="overlay">
+      <div class="overlay-card wide">
+        <h2 id="endTitle" class="overlay-title">시간 종료!</h2>
+        <p id="endReason" class="overlay-desc"></p>
+        <div id="newRecord" class="new-record" hidden>🎉 최고 점수 갱신!</div>
+        <div class="result-stats">
+          <div><span class="label">점수</span><strong id="endScore">0</strong></div>
+          <div><span class="label">연결한 단어</span><strong id="endWords">0</strong></div>
+          <div><span class="label">최고 점수</span><strong id="endBest">0</strong></div>
+        </div>
+        <div class="missed-head">아직 연결할 수 있었던 단어 <strong id="missedCount">0</strong>개</div>
+        <div id="missedList" class="missed-list"></div>
+        <div class="overlay-actions">
+          <button id="btnRestart" class="primary-btn">다시 하기</button>
+          <button id="btnViewBoard" class="ghost-btn">보드 보기</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- 사도 도감 데이터 로드 후 게임 엔진 실행 -->
