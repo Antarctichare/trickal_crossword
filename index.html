@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>트릭컬 낱말 러시 (Crossword Rush)</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Jua&family=Noto+Sans+KR:wght@500;700;900&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- 배경 캔버스: 별빛 및 부유하는 사도 일러스트 -->
+  <canvas id="bgCanvas"></canvas>
+
+  <div id="app">
+    <!-- 헤더 바 -->
+    <header class="header">
+      <div class="header-left">
+        <span class="badge">TRICKCAL</span>
+        <span class="title">낱말 러시</span>
+      </div>
+      <div class="header-stats">
+        <div class="stat-pill"><span class="label">연결</span> <strong id="wordCount">0</strong></div>
+        <div class="stat-pill"><span class="label">점수</span> <strong id="scoreDisplay">0</strong></div>
+        <div class="stat-pill timer"><span class="label">남은 시간</span> <strong id="timerText">60</strong>s</div>
+      </div>
+      <div class="header-actions">
+        <button id="btnHint" class="action-btn" title="힌트 보기">💡 힌트</button>
+        <button id="btnSound" class="action-btn" title="소리 켜기/끄기">🔊</button>
+      </div>
+    </header>
+
+    <!-- 남은 시간 프로그레스 바 -->
+    <div class="timer-bar-wrap">
+      <div id="timerBar" class="timer-bar-fill"></div>
+    </div>
+
+    <!-- 2D 크로스워드 보드 영역 (마우스 드래그/휠 지원) -->
+    <main id="viewport" class="viewport">
+      <div id="board" class="board"></div>
+      
+      <!-- 보드 위 힌트 및 말풍선 알림 레이어 -->
+      <div id="bubbleNotice" class="bubble-notice"></div>
+    </main>
+
+    <!-- 우측 하단: 단어 히스토리 로그 -->
+    <aside class="history-panel">
+      <div class="history-title">연결 기록</div>
+      <ul id="historyList" class="history-list"></ul>
+    </aside>
+
+    <!-- 하단 입력 컨트롤 -->
+    <footer class="footer">
+      <form id="wordForm" class="input-form" onsubmit="return false;">
+        <input 
+          type="text" 
+          id="wordInput" 
+          placeholder="이어질 트릭컬 단어를 입력하세요 (예: 티그, 네르)" 
+          autocomplete="off" 
+          autofocus 
+        />
+        <button type="submit" id="btnSubmit">입력</button>
+      </form>
+    </footer>
+  </div>
+
+  <!-- 사도 도감 데이터 로드 후 게임 엔진 실행 -->
+  <script src="data.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
