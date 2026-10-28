@@ -8,6 +8,48 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Jua&family=Noto+Sans+KR:wght@500;700;900&display=swap" rel="stylesheet">
+  <style>
+    /* 랭킹 전용 심플 스타일 (style.css 폰트와 디자인 통일) */
+    .ranking-section {
+      margin: 14px 0;
+      padding: 12px;
+      background: rgba(0, 0, 0, 0.05);
+      border-radius: 10px;
+      font-size: 0.95rem;
+    }
+    .nick-input-group {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .nick-input-group input {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      outline: none;
+    }
+    .rank-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      font-size: 0.9rem;
+    }
+    .rank-table th, .rank-table td {
+      padding: 5px 8px;
+      text-align: left;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    }
+    .rank-table th { color: #666; font-weight: 700; }
+    .rank-table td strong { color: #ff5722; }
+    .rank-status {
+      font-size: 0.82rem;
+      color: #666;
+      margin-top: 4px;
+      text-align: center;
+    }
+  </style>
 </head>
 <body>
 
@@ -87,6 +129,22 @@
           <li>더 이을 단어가 없으면 보드가 <strong>한 번</strong> 확장되고, 또 막히면 게임이 끝나요</li>
         </ul>
         <div class="best-line">최고 점수 <strong id="bestScoreStart">0</strong></div>
+
+        <!-- 시작 화면: 닉네임 입력 및 명예의 전당 (TOP 5) -->
+        <div class="ranking-section">
+          <div class="nick-input-group">
+            <input type="text" id="startNickInput" placeholder="랭킹용 닉네임 (2~10자)" maxlength="10">
+          </div>
+          <table class="rank-table">
+            <thead>
+              <tr><th>순위</th><th>교주명</th><th>점수</th></tr>
+            </thead>
+            <tbody id="startRankList">
+              <tr><td colspan="3" style="text-align:center;">랭킹 불러오는 중...</td></tr>
+            </tbody>
+          </table>
+        </div>
+
         <button id="btnStart" class="primary-btn">시작하기</button>
         <div class="overlay-sub">Enter 키로도 시작할 수 있어요</div>
       </div>
@@ -103,6 +161,18 @@
           <div><span class="label">연결한 단어</span><strong id="endWords">0</strong></div>
           <div><span class="label">최고 점수</span><strong id="endBest">0</strong></div>
         </div>
+
+        <!-- 종료 화면: 랭킹 등록 결과 및 TOP 10 실시간 순위 -->
+        <div class="ranking-section">
+          <div id="rankSubmitStatus" class="rank-status">점수 등록 확인 중...</div>
+          <table class="rank-table">
+            <thead>
+              <tr><th>순위</th><th>교주명</th><th>점수</th><th>단어</th></tr>
+            </thead>
+            <tbody id="endRankList"></tbody>
+          </table>
+        </div>
+
         <div class="missed-head">아직 연결할 수 있었던 단어 <strong id="missedCount">0</strong>개</div>
         <div id="missedList" class="missed-list"></div>
         <div class="overlay-actions">
@@ -116,5 +186,90 @@
   <!-- 사도 도감 데이터 로드 후 게임 엔진 실행 -->
   <script src="data.js"></script>
   <script src="game.js"></script>
+
+  <!-- Firebase 랭킹 연동 스크립트 모듈 -->
+  <script type="module">
+    import { getLastNickname, getLeaderboard, submitScore, validateNickname } from "./ranking.js";
+
+    const startNickInput = document.getElementById("startNickInput");
+    const startRankList = document.getElementById("startRankList");
+    const endRankList = document.getElementById("endRankList");
+    const rankSubmitStatus = document.getElementById("rankSubmitStatus");
+    const endScreen = document.getElementById("endScreen");
+
+    // 1. 이전 닉네임 자동 복원
+    startNickInput.value = getLastNickname();
+
+    // 2. 랭킹 로드 함수
+    async function updateRankings() {
+      const res = await getLeaderboard(10);
+      if (!res.success) {
+        startRankList.innerHTML = "<tr><td colspan='3' style='text-align:center;'>랭킹 로드 실패</td></tr>";
+        endRankList.innerHTML = "<tr><td colspan='4' style='text-align:center;'>랭킹 로드 실패</td></tr>";
+        return;
+      }
+
+      if (res.data.length === 0) {
+        const emptyRow = "<tr><td colspan='4' style='text-align:center;'>첫 도전자가 되어보세요!</td></tr>";
+        startRankList.innerHTML = emptyRow;
+        endRankList.innerHTML = emptyRow;
+        return;
+      }
+
+      // 시작 화면: TOP 5 렌더링
+      startRankList.innerHTML = res.data.slice(0, 5).map(item => `
+        <tr>
+          <td><strong>${item.rank}</strong></td>
+          <td>${item.nick}</td>
+          <td>${item.score.toLocaleString()}</td>
+        </tr>
+      `).join("");
+
+      // 종료 화면: TOP 10 렌더링
+      endRankList.innerHTML = res.data.map(item => `
+        <tr>
+          <td><strong>${item.rank}</strong></td>
+          <td>${item.nick}</td>
+          <td>${item.score.toLocaleString()}</td>
+          <td>${item.words}개</td>
+        </tr>
+      `).join("");
+    }
+
+    // 초기 시작 화면 랭킹 로드
+    updateRankings();
+
+    // 3. 게임 종료 감지 및 자동 점수 등록 (endScreen 노출 감지)
+    let scoreHandled = false;
+    const observer = new MutationObserver(async () => {
+      const isEndShown = endScreen.classList.contains("show");
+      
+      if (isEndShown && !scoreHandled) {
+        scoreHandled = true;
+
+        const currentScore = parseInt(document.getElementById("endScore")?.textContent || "0", 10);
+        const currentWords = parseInt(document.getElementById("endWords")?.textContent || "0", 10);
+        const nickname = (startNickInput.value || "").trim();
+
+        const check = validateNickname(nickname);
+        if (!check.valid) {
+          rankSubmitStatus.textContent = "닉네임(2~10자)이 설정되지 않아 랭킹에 기록되지 않았습니다.";
+          await updateRankings();
+          return;
+        }
+
+        rankSubmitStatus.textContent = "점수 등록 중...";
+        const res = await submitScore(nickname, currentScore, currentWords);
+        rankSubmitStatus.textContent = res.message;
+
+        // 최신 랭킹 갱신
+        await updateRankings();
+      } else if (!isEndShown) {
+        scoreHandled = false; // 새 게임을 시작하면 리셋
+      }
+    });
+
+    observer.observe(endScreen, { attributes: true, attributeFilter: ["class"] });
+  </script>
 </body>
 </html>
