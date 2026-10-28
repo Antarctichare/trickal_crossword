@@ -1,7 +1,7 @@
 /**
  * 트릭컬 리바이브 크로스워드 데이터 사전 (추출용.js 기준)
  * - word: 단어 (한글만, 공백/괄호/숫자/특수문자 없이)
- * - category: 사도 / 지명 / 시스템 / 아이템 / 아티팩트 / 스펠 / 스킬 / 어사이드
+ * - category: 사도 / 인물 / 지명 / 시스템 / 아이템 / 아티팩트 / 스펠 / 스킬 / 어사이드
  * - image: img/ 폴더 내 파일명 (사도·아티팩트·스펠은 ID.png, 스킬·어사이드는 보유 사도 ID.png, 없으면 default.png로 대체)
  * - title: 사도 칭호 / owner: 스킬·어사이드를 가진 사도 (힌트용)
  * - quote: 정답 맞혔을 때 대사 (선택 사항)
@@ -134,6 +134,18 @@ const TRICKCAL_DICTIONARY = [
   { word: "모나티엄", category: "지명", image: "img/monatium.png", quote: "엘프들의 최첨단 과학 도시!" },
   { word: "엘리아스", category: "지명", image: "img/elias.png", quote: "요정들과 온갖 종족이 모여 사는 세상." },
   { word: "세계수", category: "지명", image: "img/worldtree.png", quote: "모든 생명의 근원." },
+  // ── 주요 인물 (사도 외) ──
+  { word: "니펠", category: "인물", quote: "죽음이라는 관념에서 태어난 엘리아스 최초의 유령." },
+  { word: "겨우살이", category: "인물", quote: "세계수에 기생해 뿌리내린, 세계수 행세를 하던 존재." },
+  { word: "엘드르", category: "인물", quote: "세계수의 진명으로 불리는 이름." },
+  { word: "에루", category: "인물", image: "img/10058.png", quote: "우이가 늘 데리고 다니는 개구리." },
+  { word: "세바스티안", category: "인물", image: "img/10056.png", quote: "클로에가 아끼는 인형." },
+  // ── 주요 지역·단체 ──
+  { word: "수인마을", category: "지명", quote: "촌장 디아나가 이끄는 수인들의 큰 부락." },
+  { word: "사료스탕스", category: "지명", quote: "티그, 루포, 베니가 결성한 수인 조직." },
+  { word: "정령산", category: "지명", quote: "정상에 만년설이 쌓여 있고 아야가 사는 산." },
+  { word: "요정왕국", category: "지명", quote: "세계수를 국교로 믿는 요정들의 나라." },
+  { word: "주말농장", category: "지명", quote: "길 잃은 기억들이 모이는 니펠의 공간." },
   { word: "줘팸터", category: "시스템", image: "img/pvp.png", quote: "볼따구를 사정없이 줘패는 곳!" },
   { word: "모카롱", category: "아이템", image: "img/macaron.png", quote: "달콤하고 부드러운 최고의 간식!" },
   { word: "별사탕", category: "아이템", image: "img/candy.png", quote: "영롱하게 빛나는 재화." },
