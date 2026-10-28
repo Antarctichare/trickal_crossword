@@ -124,6 +124,7 @@ const TRICKCAL_DICTIONARY = [
   { word: "스패럿", category: "사도", image: "images/10134.png", title: "풍운의 해적" },
   { word: "오로라", category: "사도", image: "images/10135.png", title: "아우라 관측자" },
   { word: "로니", category: "사도", image: "images/10136.png", title: "황야의 방랑자" },
+  { word: "코페", category: "사도", image: "images/10139.png", title: "완벽한 커피 한 잔" },
   { word: "모나티엄", category: "지명", image: "images/monatium.png", quote: "엘프들의 최첨단 과학 도시!" },
   { word: "엘리아스", category: "지명", image: "images/elias.png", quote: "요정들과 온갖 종족이 모여 사는 세상." },
   { word: "세계수", category: "지명", image: "images/worldtree.png", quote: "모든 생명의 근원." },
